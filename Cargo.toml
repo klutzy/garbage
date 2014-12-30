@@ -1,0 +1,9 @@
+[package]
+
+name = "modp"
+version = "0.0.1"
+authors = ["klutzy <klutzytheklutzy@gmail.com>"]
+
+[dependencies]
+
+num = "*"
