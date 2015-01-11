@@ -83,7 +83,7 @@ pub fn size_to_ty(size: u8) -> ast::Ty {
         16 => "u16",
         32 => "u32",
         64 => "u64",
-        _ => panic!("unsupported limb size"),
+        _ => panic!("unsupported limb size: {}", size),
     };
     str_to_ty(s)
 }

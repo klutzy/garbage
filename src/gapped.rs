@@ -1,3 +1,4 @@
+use std::iter::AdditiveIterator;
 use num::bigint::{BigUint, ToBigUint};
 use syntax::ast;
 use syntax::codemap::{DUMMY_SP, dummy_spanned};
@@ -5,10 +6,19 @@ use syntax::parse;
 use syntax::parse::token;
 use syntax::ptr::P;
 
+use util::*;
+
 // TODO use signed for more fun
 
-fn limb_bit_size(r: &[u8]) -> uint {
-    (r.iter().max() as uint / 8) * 8
+fn limb_bit_size(r: &[u8]) -> u8 {
+    let bit_max = *r.iter().max().unwrap();
+    match bit_max {
+        1...8 => 8,
+        9...16 => 16,
+        17...32 => 32,
+        33...64 => 64,
+        _ => panic!("unsupported limb size: {:?}", r),
+    }
 }
 
 /// `struct $name([T; N])` represents
@@ -21,15 +31,15 @@ pub fn generate(name: &str, n: u32, m: u32, r: &[u8]) -> ast::Mod {
     let qcx = QuoteCtxt::new("p", &sess);
     let mut items = Vec::new();
 
-    let pown = 1u8.to_biguint().unwrap() << (n as uint);
+    let pown = 1u8.to_biguint().unwrap() << (n as usize);
     let p = pown - m.to_biguint().unwrap();
 
+    let limb_bit_size = limb_bit_size(r);
     let p_vec = biguint_to_vec(&p, limb_bit_size);
 
-    let total_bytes = (r.iter().sum() + 7) / 8;
+    let total_bytes = (r.iter().map(|&x| x).sum() + 7) / 8;
 
     let len = r.len();
-    let limb_bit_size = limb_bit_size(r);
     let limb_bytes = (limb_bit_size / 8) * 8;
     let limb_extra_bits = limb_bytes * 8 - limb_bit_size;
 
@@ -43,56 +53,71 @@ pub fn generate(name: &str, n: u32, m: u32, r: &[u8]) -> ast::Mod {
     ).expect("quote_item error");
     items.push(struct_item);
 
-    let prime = token::str_to_ident("P");
-    let prime_item = quote_item!(&qcx.cx,
-        pub static $prime: $name = $name($prime_array);
-    ).expect("quote_item failed to create prime item");
-    items.push(prime_item);
-
-    // suppose we have r = [3, 4, 5, 6].
-    // total bits: 18
-    // total bytes: 5
-    // // b_offset = 0;
-    // // b_index = 0;
-    // // r_index = 0;
-    // r0 = b[0] & (3 bits);
-    // // 0, b_offset 3, 1
-    // // 8 - 3 == 5 >= 4
-    // r1 = (b[0] >> 3) & (4 bits);
-    // // b_index 0, b_offset 7, r_index 2
-    // // 8 - 7 == 1 />= 5
-    // r2 = (b[0] >> 7)
-    // // prev_offset = 1
-    //      | () << 1;
+    // TODO
+    // let prime = token::str_to_ident("P");
+    // let prime_item = quote_item!(&qcx.cx,
+    //     pub static $prime: $name = $name($prime_array);
+    // ).expect("quote_item failed to create prime item");
+    // items.push(prime_item);
 
     let from_bytes_method = {
         // op_info: (v_index, v_offset, rshift, bits, lshift)
         // at least one of rshift or lshift is 0 (because we assume each limb size > 8)
-        let mut op_infos = Vec::new();
+        let mut stmts = Vec::new();
 
-        let offset = 0; // bit offset
-        let index = 0;
+        let v = token::str_to_ident("v");
+        let b = token::str_to_ident("b");
+
+        // `$b[$bi]`, `$b_bit_offset`-th bit.
+        let mut bi = 0us;
+        // XXX: usize only for easy quote. it can be fixed if shift permits u8
+        let mut b_bit_offset = 0us;
         for (i, &ri) in r.iter().enumerate() {
-            let available = 8 - offset;
-            let mut r_offset = 0;
-            while ri >= available {
-                // r[i] = r[i] | ((v[index] as u?? >> offset) & (ri bits)) << r_offset
+            // XXX: same here.
+            let ri = ri as usize;
 
-                index += 1;
-                r_offset += ri;
+            let mut v_offset = 0us;
+
+            if b_bit_offset > 0 {
+                // we used only partial portion of `$b[$bi]`. use the remaining bits here.
+                let stmt = quote_stmt!(&qcx.cx,
+                    $v[$i] |= ($b[$bi] as $ty) >> $b_bit_offset;
+                );
+                stmts.push(stmt);
+                v_offset += 8 - b_bit_offset;
+                b_bit_offset = 0;
+                bi += 1;
+            }
+
+            while v_offset + 8 <= ri {
+                let stmt = quote_stmt!(&qcx.cx,
+                    $v[$i] |= ($b[$bi] as $ty) << $v_offset;
+                );
+                stmts.push(stmt);
+                v_offset += 8;
+                bi += 1;
+            }
+
+            b_bit_offset = ri - v_offset;
+            if b_bit_offset > 0 {
+                let stmt = quote_stmt!(&qcx.cx,
+                    $v[$i] |= (($b[$bi] as $ty) & ((1 << $b_bit_offset) - 1) ) << $v_offset;
+                );
+                stmts.push(stmt);
             }
         }
 
-        let limbs = P(dummy_spanned(ast::ExprVec(limbs)));
-
         quote_item!(&qcx.cx,
             // little endian
-            pub fn from_bytes_le(v: &[u8]) -> Option<$name> {
-                if v.len() != $total_bytes {
+            pub fn from_bytes_le($b: &[u8]) -> Option<$name> {
+                if $b.len() != $total_bytes {
                     return None;
                 }
+                let mut $v = [0; $len];
 
-                Some($limbs)
+                $stmts
+
+                Some($v)
             }
         )
     };
