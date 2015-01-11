@@ -60,10 +60,9 @@ pub fn generate(name: &str, n: u32, m: u32, r: &[u8]) -> ast::Mod {
     // ).expect("quote_item failed to create prime item");
     // items.push(prime_item);
 
-    let from_bytes_method = {
-        // op_info: (v_index, v_offset, rshift, bits, lshift)
-        // at least one of rshift or lshift is 0 (because we assume each limb size > 8)
-        let mut stmts = Vec::new();
+    let (from_bytes_method, to_bytes_method) = {
+        let mut from_stmts = Vec::new();
+        let mut to_stmts = Vec::new();
 
         let v = token::str_to_ident("v");
         let b = token::str_to_ident("b");
@@ -80,55 +79,80 @@ pub fn generate(name: &str, n: u32, m: u32, r: &[u8]) -> ast::Mod {
 
             if b_bit_offset > 0 {
                 // we used only partial portion of `$b[$bi]`. use the remaining bits here.
-                let stmt = quote_stmt!(&qcx.cx,
+                let from_stmt = quote_stmt!(&qcx.cx,
                     $v[$i] |= ($b[$bi] as $ty) >> $b_bit_offset;
                 );
-                stmts.push(stmt);
+                from_stmts.push(from_stmt);
+
+                let to_stmt = quote_stmt!(&qcx.cx,
+                    $b[$bi] |= (self.0[$i] << $b_bit_offset) as u8;
+                );
+                to_stmts.push(to_stmt);
+
                 v_offset += 8 - b_bit_offset;
                 b_bit_offset = 0;
                 bi += 1;
             }
 
             while v_offset + 8 <= ri {
-                let stmt = quote_stmt!(&qcx.cx,
+                let from_stmt = quote_stmt!(&qcx.cx,
                     $v[$i] |= ($b[$bi] as $ty) << $v_offset;
                 );
-                stmts.push(stmt);
+                from_stmts.push(from_stmt);
+
+                let to_stmt = quote_stmt!(&qcx.cx,
+                    $b[$bi] |= (self.0[$i] >> $v_offset) as u8;
+                );
+                to_stmts.push(to_stmt);
+
                 v_offset += 8;
                 bi += 1;
             }
 
             b_bit_offset = ri - v_offset;
             if b_bit_offset > 0 {
-                let stmt = quote_stmt!(&qcx.cx,
+                let from_stmt = quote_stmt!(&qcx.cx,
                     $v[$i] |= (($b[$bi] as $ty) & ((1 << $b_bit_offset) - 1) ) << $v_offset;
                 );
-                stmts.push(stmt);
+                from_stmts.push(from_stmt);
+
+                let to_stmt = quote_stmt!(&qcx.cx,
+                    $b[$bi] |= (self.0[$i] >> $v_offset) as u8 & ((1 << $b_bit_offset) - 1);
+                );
+                to_stmts.push(to_stmt);
             }
         }
 
-        quote_item!(&qcx.cx,
-            // little endian
+        let from_bytes = quote_method!(&qcx.cx,
             pub fn from_bytes_le($b: &[u8]) -> Option<$name> {
                 if $b.len() != $total_bytes {
                     return None;
                 }
                 let mut $v = [0; $len];
 
-                $stmts
+                $from_stmts
 
                 Some($v)
             }
-        )
+        );
+
+        let to_bytes = quote_method!(&qcx.cx,
+            pub fn to_bytes_le(&self) -> Vec<u8> {
+                let mut $b = [0; $total_bytes];
+
+                $to_stmts
+
+                $b.to_vec()
+            }
+        );
+
+        (from_bytes, to_bytes)
     };
 
     let impl_item = quote_item!(&qcx.cx,
         impl $name {
             $from_bytes_method
-
-            pub fn to_bytes_le(&self) -> Vec<u8> {
-                // TODO
-            }
+            $to_bytes_method
 
             pub fn add(&self, b: &$name) -> $name {
                 let mut v = $name([0, ..$len]);
