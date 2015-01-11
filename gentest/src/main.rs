@@ -1,11 +1,11 @@
 #![feature(slicing_syntax)]
 
+#![allow(unstable)]
+
 extern crate num;
 
 use std::rand::{Rng, SeedableRng, IsaacRng};
 use num::bigint::{BigUint, ToBigUint, BigDigit};
-
-// TODO tests are hardcoded for mod (2^130 - 5)
 
 use gen::{Int1305, P};
 
@@ -22,7 +22,6 @@ fn p() -> BigUint {
 }
 
 // little-endian
-// NOTE: not normalized!
 fn bytes_to_biguint(b: &[u8]) -> BigUint {
     let zero: BigUint = 0u8.to_biguint().unwrap();
     let mut val = zero;
@@ -37,10 +36,9 @@ fn bytes_to_biguint(b: &[u8]) -> BigUint {
 pub fn biguint_to_bytes(u: &BigUint) -> Vec<u8> {
     use std::num::Int;
 
-    // since div_mod_floor is super slow...
     let v: &Vec<BigDigit> = unsafe { std::mem::transmute(u) };
 
-    let len = 17u; // 2^130-5 hardcode
+    let len = 17us; // 2^130-5 hardcode
 
     let mut ret = Vec::new();
     for i in v.iter() {
@@ -79,7 +77,7 @@ fn tests() -> Vec<BigUint> {
 
     let mut buf = [0u8; 17];
     let p = p();
-    for _ in 0u..100 {
+    for _ in 0us..100 {
         rng.fill_bytes(&mut buf);
         let new_num = bytes_to_biguint(&buf) % p.clone();
         ret.push(new_num);
@@ -104,8 +102,7 @@ fn test_from_to_bytes() {
     for a in tests.iter() {
         let a_b = biguint_to_bytes(a);
 
-        println!("a_b: {}", a_b);
-        let a_i = Int1305::from_bytes_le(&*a_b).expect("from_bytes failed1");
+        let a_i = Int1305::from_bytes_le(&*a_b).expect("from_bytes failed!");
         let a_i_b = a_i.to_bytes_le();
 
         assert_eq!(a_b, a_i_b);
@@ -123,7 +120,7 @@ fn test_arith() {
         let actual_b = actual.to_bytes_le();
 
         if expected_b != actual_b {
-            panic!("expected {} ({}), found {}", expected_b, expected, actual_b);
+            panic!("expected {:?} ({}), found {:?}", expected_b, expected, actual_b);
         }
     }
 

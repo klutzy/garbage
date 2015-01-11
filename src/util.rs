@@ -12,7 +12,7 @@ use syntax::ptr::P;
 pub fn biguint_to_vec(n: &BigUint, limb_size: u8) -> Vec<u64> {
     let zero: BigUint = Zero::zero();
     let one: BigUint = One::one();
-    let limb_unit: BigUint = one << (limb_size as uint);
+    let limb_unit: BigUint = one << (limb_size as usize);
     let mut ret = Vec::new();
 
     let mut n = n.clone();
@@ -52,8 +52,8 @@ pub fn limbs(p: &BigUint, limb_size: u8) -> u8 {
 pub fn barrett_constant(p: &BigUint, limb_bit_size: u8, len: u8) -> BigUint {
     let one: BigUint = One::one();
 
-    let len = len as uint;
-    let limb_bit_size = limb_bit_size as uint;
+    let len = len as usize;
+    let limb_bit_size = limb_bit_size as usize;
 
     let n2k = one << (len * limb_bit_size * 2);
     &n2k / p
@@ -96,7 +96,6 @@ pub struct QuoteCtxt<'a> {
 impl<'a> QuoteCtxt<'a> {
     pub fn new(name: &str, sess: &'a ParseSess) -> QuoteCtxt<'a> {
         let cfg = ExpansionConfig {
-            deriving_hash_type_parameter: false,
             crate_name: name.to_string(),
             enable_quotes: true,
             recursion_limit: 64,

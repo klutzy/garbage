@@ -27,10 +27,10 @@ pub fn generate(name: &str, p: &BigUint, limb_bit_size: u8) -> ast::Mod {
     let ty = size_to_ty(limb_bit_size);
     let ty2 = size_to_ty(limb_bit_size * 2);
 
-    // quote likes uint
-    let len = len as uint;
-    let limb_bit_size = limb_bit_size as uint;
-    let limb_size = limb_bit_size as uint / 8;
+    // quote likes usize
+    let len = len as usize;
+    let limb_bit_size = limb_bit_size as usize;
+    let limb_size = limb_bit_size as usize / 8;
 
     let prime_array = slice_to_expr(&*p_vec);
     let barrett_array = slice_to_expr(&*barrett_vec);
@@ -78,7 +78,7 @@ pub fn generate(name: &str, p: &BigUint, limb_bit_size: u8) -> ast::Mod {
 
             pub fn to_bytes_le(&self) -> Vec<u8> {
                 let mut b = [0u8; $total_bytes];
-                for i in (0u..$len) {
+                for i in (0us..$len) {
                     for j in (0..$limb_size) {
                         let idx = i * $limb_size + j;
                         if idx >= $total_bytes {
@@ -118,7 +118,7 @@ pub fn generate(name: &str, p: &BigUint, limb_bit_size: u8) -> ast::Mod {
 
                 // invariant: carry <= 1
                 let mut carry: $ty2 = 0;
-                for i in (0u..$len) {
+                for i in (0us..$len) {
                     // add <= 2^($limb_bit_size + 1)
                     let add = (self.0[i] as $ty2) + (b.0[i] as $ty2) + carry;
                     v.0[i] = add as $ty;
@@ -136,7 +136,7 @@ pub fn generate(name: &str, p: &BigUint, limb_bit_size: u8) -> ast::Mod {
 
                 // invariant: carry_sub <= 1
                 let mut carry_sub: $ty2 = 0;
-                for i in (0u..$len) {
+                for i in (0us..$len) {
                     // -2^$limb_bit_size <= sub <= 2^$limb_bit_size
                     let sub = (self.0[i] as $ty2) - (b.0[i] as $ty2) - carry_sub;
                     // if sub < 0, set carry_sub = 1 and sub += 2^$limb_bit_size
@@ -180,10 +180,10 @@ pub fn generate(name: &str, p: &BigUint, limb_bit_size: u8) -> ast::Mod {
                     let alen = a.len();
                     let blen = b.len();
                     debug_assert_eq!(alen + blen, c.len());
-                    for i in 0u..(alen) {
+                    for i in 0us..(alen) {
                         // invariant: carry <= 2^$limb_bit_size
                         let mut carry: $ty2 = 0;
-                        for j in 0u..(blen) {
+                        for j in 0us..(blen) {
                             // c[i+j], carry <= 2^limb_bit_size - 1
                             // a[i] * b[j] <= (2^(limb_bit_size) - 1)^2
                             // therefore uv <= 2^(2 * limb_bit_size) - 1
@@ -195,7 +195,7 @@ pub fn generate(name: &str, p: &BigUint, limb_bit_size: u8) -> ast::Mod {
                     }
                 }
 
-                let mut x: [$ty; $len * 2u] = [0; $len * 2u];
+                let mut x: [$ty; $len * 2us] = [0; $len * 2us];
                 mult_inner(&self.0, &b.0, &mut x);
 
                 // # Barrett reduction
@@ -212,12 +212,12 @@ pub fn generate(name: &str, p: &BigUint, limb_bit_size: u8) -> ast::Mod {
                 // then we can compute `r = x - q * p` then reduce `r` 3 times.
 
                 // q0 = (x / limb^(len-1)) * B
-                let mut q0: [$ty; $len * 2u + 2u] = [0; $len * 2u + 2u];
-                mult_inner(x[($len - 1)..], &$barrett, &mut q0);
-                let q = q0[($len + 1)..]; // length $len + 1
+                let mut q0: [$ty; $len * 2us + 2us] = [0; $len * 2us + 2us];
+                mult_inner(&x[($len - 1)..], &$barrett, &mut q0);
+                let q = &q0[($len + 1)..]; // length $len + 1
 
                 // FIXME: actually we only need `qp[..$len+1]`.
-                let mut qp: [$ty; $len * 2u + 1u] = [0; $len * 2u + 1u];
+                let mut qp: [$ty; $len * 2us + 1us] = [0; $len * 2us + 1us];
                 mult_inner(q, &$prime.0, &mut qp);
 
                 // compute `x - qp`.
