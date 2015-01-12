@@ -10,36 +10,89 @@ use util::*;
 
 // TODO use signed for more fun
 
-fn limb_bit_size(r: &[u8]) -> u8 {
-    let bit_max = *r.iter().max().unwrap();
-    match bit_max {
-        1...8 => 8,
-        9...16 => 16,
-        17...32 => 32,
-        33...64 => 64,
-        _ => panic!("unsupported limb size: {:?}", r),
-    }
+fn sum(a: &[u8]) -> usize {
+    a.iter().map(|x| (*x as u16)).sum() as usize
 }
 
-/// `struct $name([T; N])` represents
-/// `t[0] + t[1] * 2^r[0] + t[2] * 2^(r[0] + r[1]) + ...`.
-///
-/// n, m represents prime `2^n - m`.
-/// r: bit size of each limb. each limb must have size `> 8`.
-pub fn generate(name: &str, n: u32, m: u32, r: &[u8]) -> ast::Mod {
+// with non-uniform limb, multiplication becomes more interesting!
+// suppose we have x = x0 + r0 * (x1 + r1 * ...) and y as well.
+// x * y = (x0 * y0)
+//         + r1 * x1 * y0 + r1 * x0 * y1
+//         + r1 * r2 * x2 * y0 + r1 * r1 * x1 * y1 + r1 * r2 * x0 * y2
+//         + ...
+// note that r1 * r1 may be different r1 * r2 and so on.
+// suppose r1 * r1 >= r1 * r2 and so on.
+// define d[k,i] = (r0 * ... * r[i-1]) * (r0 * ... * r[k-i-1]) / r0 * ... * r[k-1].
+// it must be natural numbers!
+// (bydef d[k,i] = d[k,k-i] and d[k,0] = 1)
+// x * y = (x0 * y0)
+//         + r1 * (x1 * y0 + x0 * y1)
+//         + (r1 * r2) * (x2 * y0 + d21 * x1 * y1 + x0 * y2)
+//         + (r1 * r2 * r3) * (x3 * y0 + d31 * (x2 * y1 + x1 * y2) + x0 * y3)
+//         + (r1 * ... * r4) * (x4 * y0 + d41 * (x3 * y1 + x1 * y3) + d42 * (x2 * y2) + x0 * y4)
+//         + ...
+//
+// (here we also assume `r` is repeated after r[len-1].
+// also, (x * y)[k] requires k additions of x[i] * y[k-i] * d[i,k],
+// so roughly ty2.bits >= max(x[_].bits) + max(y[_].bits) + max(d[_].bits) + lg(k)
+// (also, since we use lazy normalization on addition, x[_].bits here is slightly
+// larger than r[i].)
+fn limb_mult_shift(r2: &[u8], k: usize, i: usize) -> usize {
+    let rk = sum(&r2[..k]);
+    let ri = sum(&r2[..i]);
+    let rki = sum(&r2[..(k - i)]);
+    if rk > ri + rki {
+        panic!("limbs have pathological length: i {}, k {}", i, k);
+    }
+    println!("// k {} i {} ri {} rki {} rk {} r2 {:?}", k, i, ri, rki, rk, r2);
+    ri + rki - rk
+}
+
+fn expand_limbs(n: u32, r: &[u8]) -> Vec<u8> {
+    let r_bits = sum(r);
+    let n = n as usize;
+    if n % r_bits != 0 {
+        panic!("prime bits ({}) % size of base limbs ({}) != 0", n, r_bits);
+    }
+
+    let num = n / r_bits;
+    let mut ret = Vec::new();
+    for _ in (0..num) {
+        ret.push_all(r);
+    }
+    ret
+}
+
+// `struct $name([T; N])` represents
+// `t[0] + t[1] * 2^r[0] + t[2] * 2^(r[0] + r[1]) + ...`.
+//
+// n, m represents prime `2^n - m`.
+// r: bit size of each limb. assumptions:
+// sum(r) must be divisibly by n.
+// r is implicitly repeated. [26, 25] means 26, 25, 26, 25, ...
+// (e.g. 255 == (26 + 25) * 5. this is used for doublewidth reduction:
+// if a * b == c0 + 2^255 * c1 then c0 and c1 has same limb representation.)
+// for any i and k, `r[0] * ... * r[k-1] >= (r[0] * ... r[i-1]) * (r[0] * ... * r[k-i-1]).
+// each limb must have size `> 8`.
+// TODO check the assumptions
+pub fn generate(name: &str, limb_bit_size: u8, n: u32, m: u32, r: &[u8]) -> ast::Mod {
     let sess = parse::new_parse_sess();
     let qcx = QuoteCtxt::new("p", &sess);
     let mut items = Vec::new();
 
-    let pown = 1u8.to_biguint().unwrap() << (n as usize);
-    let p = pown - m.to_biguint().unwrap();
+    let p = (1u8.to_biguint().unwrap() << (n as usize)) - m.to_biguint().unwrap();
 
-    let limb_bit_size = limb_bit_size(r);
     let p_vec = biguint_to_vec(&p, limb_bit_size);
 
-    let total_bytes = (r.iter().map(|&x| x).sum() + 7) / 8;
+    let total_bytes = (n + 7) / 8;
 
+    let r = expand_limbs(n, r);
     let len = r.len();
+    let r2 = {
+        let mut r2 = r.clone();
+        r2.push_all(&*r);
+        r2
+    };
     let limb_bytes = (limb_bit_size / 8) * 8;
     let limb_extra_bits = limb_bytes * 8 - limb_bit_size;
 
@@ -149,6 +202,33 @@ pub fn generate(name: &str, n: u32, m: u32, r: &[u8]) -> ast::Mod {
         (from_bytes, to_bytes)
     };
 
+    let mult_method = {
+        let mut stmts = Vec::new();
+
+        // k == i + j
+        for k in (0..(len * 2)) {
+            for i in (0..len) {
+                if i >= len || k < i || k - i >= len {
+                    continue;
+                }
+                let j = k - i;
+                let d = limb_mult_shift(&*r2, k, i);
+                let stmt = quote_stmt!(&qcx.cx,
+                    m[$k] += (self.0[$i] as $ty2) * (b.0[$j] as $ty2) << $d;
+                );
+                stmts.push(stmt);
+            }
+        }
+
+        quote_method!(&qcx.cx,
+            pub fn mult(&self, b: &$name) -> $name {
+                let mut m = [0; $len * 2];
+
+                $stmts
+            }
+        )
+    };
+
     let impl_item = quote_item!(&qcx.cx,
         impl $name {
             $from_bytes_method
@@ -173,6 +253,12 @@ pub fn generate(name: &str, n: u32, m: u32, r: &[u8]) -> ast::Mod {
 
                 v
             }
+
+            pub fn normalize(&self) -> $name {
+                // TODO
+            }
+
+            $mult_method
         }
     ).expect("quote_item failed for impl");
     items.push(impl_item);
