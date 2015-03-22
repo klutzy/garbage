@@ -72,7 +72,7 @@ pub fn str_to_ty(s: &str) -> ast::Ty {
     };
     ast::Ty {
         id: ast::DUMMY_NODE_ID,
-        node: ast::TyPath(ty, ast::DUMMY_NODE_ID),
+        node: ast::TyPath(None, ty),
         span: DUMMY_SP,
     }
 }
@@ -97,14 +97,19 @@ impl<'a> QuoteCtxt<'a> {
     pub fn new(name: &str, sess: &'a ParseSess) -> QuoteCtxt<'a> {
         let cfg = ExpansionConfig {
             crate_name: name.to_string(),
-            enable_quotes: true,
+            features: None,
             recursion_limit: 64,
         };
         let mut ext_cx = base::ExtCtxt::new(sess, Vec::new(), cfg);
         // top span seems necessary. TODO: understand it properly
         ext_cx.bt_push(ExpnInfo {
             call_site: DUMMY_SP,
-            callee: NameAndSpan { name: String::new(), format: MacroBang, span: None }
+            callee: NameAndSpan {
+                name: String::new(),
+                format: MacroBang,
+                span: None,
+                allow_internal_unstable: false,
+            }
         });
 
         QuoteCtxt {

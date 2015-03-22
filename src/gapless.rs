@@ -270,7 +270,6 @@ pub fn generate(name: &str, p: &BigUint, limb_bit_size: u8) -> ast::Mod {
 
     ast::Mod {
         inner: DUMMY_SP,
-        view_items: Vec::new(),
         items: items,
     }
 }

@@ -3,13 +3,12 @@
 #![crate_type = "bin"]
 #![crate_name = "modp"]
 
-// we are already unstable ;)
-#![allow(unstable)]
-
-#![feature(slicing_syntax, quote)]
+#![feature(core, rustc_private, quote)]
 
 extern crate num;
 extern crate syntax;
+
+use std::io::Write;
 
 use num::bigint::{BigUint, ToBigUint};
 use syntax::print::{pp, pprust};
@@ -23,7 +22,7 @@ fn main() {
     let p1305: BigUint = &n130 - &five;
     let code = gapless::generate("Int1305", &p1305, 32);
 
-    let stdout = Box::new(std::io::stdout()) as Box<Writer + 'static>;
+    let stdout = Box::new(std::io::stdout()) as Box<Write + 'static>;
     let mut ps = pprust::rust_printer(stdout);
     ps.print_mod(&code, &[]).unwrap();
     ps.print_remaining_comments().unwrap();
